@@ -18,7 +18,12 @@ slicerMacroBuildScriptedModule(
   SCRIPTS SEGExporterSelfTest.py
   )
 
+set(MODULE_PYTHON_RESOURCES
+  ../Resources/Icons/icon_unlock.png
+  )
+
 slicerMacroBuildScriptedModule(
   NAME QuantitativeReporting
   SCRIPTS QuantitativeReporting.py
+  RESOURCES ${MODULE_PYTHON_RESOURCES}
   )

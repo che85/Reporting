@@ -47,6 +47,8 @@ class QuantitativeReportingWidget(ModuleWidgetMixin, ScriptedLoadableModuleWidge
 
   def __init__(self, parent=None):
     ScriptedLoadableModuleWidget.__init__(self, parent)
+    self.modulePath = os.path.dirname(slicer.util.modulePath(self.moduleName))
+    self.iconPath = os.path.join(self.modulePath, '../Resources/Icons')
     self.segmentationsLogic = slicer.modules.segmentations.logic()
     self.slicerTempDir = slicer.util.tempDirectory()
 
@@ -179,8 +181,14 @@ class QuantitativeReportingWidget(ModuleWidgetMixin, ScriptedLoadableModuleWidge
 
     self.selectionAreaWidgetLayout.addWidget(qt.QLabel("Measurement report"), 0, 0)
     self.selectionAreaWidgetLayout.addWidget(self.measurementReportSelector, 0, 1)
+
+    self.unlockIcon = self.createIcon("icon_unlock.png", self.iconPath)
+    self.lockUnlockButton = self.createButton("", icon=self.unlockIcon, iconSize=qt.QSize(24, 24), enabled=False)
+
+    self.selectionAreaWidgetLayout.addWidget(self.lockUnlockButton, 0, 2)
+
     self.selectionAreaWidgetLayout.addWidget(qt.QLabel("Image volume to annotate"), 1, 0)
-    self.selectionAreaWidgetLayout.addWidget(self.imageVolumeSelector, 1, 1)
+    self.selectionAreaWidgetLayout.addWidget(self.imageVolumeSelector, 1, 1, 1, 2)
     self.mainModuleWidgetLayout.addWidget(self.selectionAreaWidget)
     self.mainModuleWidgetLayout.addWidget(self.segmentationGroupBox)
 
@@ -236,6 +244,7 @@ class QuantitativeReportingWidget(ModuleWidgetMixin, ScriptedLoadableModuleWidge
       getattr(self.saveReportButton.clicked, funcName)(self.onSaveReportButtonClicked)
       getattr(self.completeReportButton.clicked, funcName)(self.onCompleteReportButtonClicked)
       getattr(self.calculateMeasurementsButton.clicked, funcName)(lambda: self.updateMeasurementsTable(triggered=True))
+      getattr(self.lockUnlockButton.clicked, funcName)(self.onLockUnlockButtonClicked)
 
     def setupOtherConnections():
       getattr(self.layoutManager.layoutChanged, funcName)(self.onLayoutChanged)
@@ -248,6 +257,32 @@ class QuantitativeReportingWidget(ModuleWidgetMixin, ScriptedLoadableModuleWidge
     setupSelectorConnections()
     setupButtonConnections()
     setupOtherConnections()
+
+  def onLockUnlockButtonClicked(self, checked):
+    if not self.tableNode:
+      return
+    self.lockUnlockButton.setToolTip("Unlock current measurement report")
+    if slicer.util.confirmYesNoDisplay("Attention! A copy of the currently opened measurement report will be created "
+                                       "including a copy of the segmentation. The original DICOM files won't be touched. "
+                                       "Do you want to proceed?"):
+
+      copy = self.createTableNodeCopy(self.tableNode)
+      self.measurementReportSelector.setCurrentNode(copy)
+
+  def createTableNodeCopy(self, tableNode):
+    copyNode = slicer.vtkMRMLTableNode()
+    slicer.mrmlScene.AddNode(copyNode)
+    copyNode.Copy(tableNode)
+    copyNode.SetName(tableNode.GetName() + "_copy")
+    copyNode.SetAttribute("readonly", None)
+    segmentationNodeID = copyNode.GetAttribute('ReferencedSegmentationNodeID')
+    segmentationNode = slicer.mrmlScene.GetNodeByID(segmentationNodeID)
+    if segmentationNode:
+      segCopyNode = self.createNewSegmentationNode()
+      segCopyNode.Copy(segmentationNode)
+      segCopyNode.SetName(segmentationNode.GetName()+"_copy")
+      copyNode.SetAttribute('ReferencedSegmentationNodeID', segCopyNode.GetID())
+    return copyNode
 
   def onTabWidgetClicked(self, currentIndex):
     if currentIndex == 0:
@@ -329,9 +364,13 @@ class QuantitativeReportingWidget(ModuleWidgetMixin, ScriptedLoadableModuleWidge
     self.tableNode = node
     self.hideAllSegmentations()
     if node is None:
+      self.lockUnlockButton.enabled = False
       self.segmentationNodeSelector.setCurrentNode(None)
       return
 
+    self.proceedWithLoadingMeasurementReport()
+
+  def proceedWithLoadingMeasurementReport(self):
     segmentationNodeID = self.tableNode.GetAttribute('ReferencedSegmentationNodeID')
     logging.debug("ReferencedSegmentationNodeID {}".format(segmentationNodeID))
     if segmentationNodeID:
@@ -342,16 +381,20 @@ class QuantitativeReportingWidget(ModuleWidgetMixin, ScriptedLoadableModuleWidge
     self.segmentationNodeSelector.setCurrentNode(segmentationNode)
     segmentationNode.SetDisplayVisibility(True)
     self.setupSegmentationObservers()
-    if self.tableNode.GetAttribute("readonly"):
+    self.configureForCurrentMeasurementReport()
+
+  def configureForCurrentMeasurementReport(self):
+    readonly = self.tableNode.GetAttribute("readonly")
+    self.lockUnlockButton.enabled = readonly
+    self.segmentEditorWidget.enabled = not readonly
+    self.calculateAutomaticallyCheckbox.enabled = not readonly
+    self.segmentEditorWidget.table.setReadOnly(readonly)
+    self.enableReportButtons(not readonly)
+
+    if readonly:
       logging.debug("Selected measurements report is readonly")
       self.setMeasurementsTable(self.tableNode)
-      self.segmentEditorWidget.table.setReadOnly(True)
-      self.segmentEditorWidget.enabled = False
-      self.enableReportButtons(False)
-      self.calculateAutomaticallyCheckbox.enabled = False
     else:
-      self.segmentEditorWidget.enabled = True
-      self.calculateAutomaticallyCheckbox.enabled = True
       self.onSegmentationNodeChanged()
 
   def hideAllSegmentations(self):
@@ -455,7 +498,7 @@ class QuantitativeReportingWidget(ModuleWidgetMixin, ScriptedLoadableModuleWidge
     segmentStatisticsLogic = self.segmentEditorWidget.logic.segmentStatisticsLogic
     data = dict()
     data.update(self._getSeriesAttributes())
-    data["SeriesDescription"] =  "Segmentation"
+    data["SeriesDescription"] = "Segmentation"
     data.update(self._getAdditionalSeriesAttributes())
     data["segmentAttributes"] = segmentStatisticsLogic.generateJSON4DcmSEGExport()
 
